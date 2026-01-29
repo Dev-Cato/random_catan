@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Catan Mobile Fixed</title>
+    <style>
+        :root { --hex-w: 100px; --hex-h: 110px; }
+        
+        body { 
+            font-family: 'Segoe UI', sans-serif; 
+            background: #121212; 
+            color: white; 
+            margin: 0; 
+            display: flex; 
+            height: 100vh; 
+            width: 100vw;
+            overflow: hidden; 
+        }
+
+        /* SIDEBAR */
+        .sidebar { 
+            width: 300px; 
+            background: #2c3e50; 
+            padding: 15px; 
+            z-index: 10; 
+            box-shadow: 2px 0 10px rgba(0,0,0,0.5); 
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            flex-shrink: 0;
+        }
+
+        .control-group { background: #34495e; padding: 10px; border-radius: 8px; }
+        label { display: block; font-size: 0.7em; color: #bdc3c7; margin-bottom: 3px; font-weight: bold; }
+        
+        input { 
+            width: 100%; padding: 8px; border-radius: 4px; border: none; 
+            background: #1a252f; color: white; box-sizing: border-box; 
+        }
+
+        .res-grid { 
+            display: grid; 
+            grid-template-columns: repeat(3, 1fr); 
+            gap: 5px; 
+        }
+
+        button { 
+            width: 100%; padding: 12px; background: #e67e22; color: white; 
+            border: none; border-radius: 4px; cursor: pointer; font-weight: bold;
+        }
+
+        /* VIEWPORT - DER FIX */
+        .viewport { 
+            flex-grow: 1; 
+            background: radial-gradient(circle, #2980b9 0%, #1a252f 100%); 
+            position: relative;
+            display: flex;
+            align-items: center;  /* Vertikale Zentrierung */
+            justify-content: center; /* Horizontale Zentrierung */
+            overflow: hidden;
+        }
+
+        #board-wrapper { 
+            position: absolute;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            /* Wichtig für die Skalierung aus der Mitte */
+            transform-origin: center center; 
+        }
+
+        #board { 
+            position: relative;
+            /* Breite/Höhe werden per JS gesetzt für korrekte Zentrierung */
+        }
+
+        .hex {
+            position: absolute; width: var(--hex-w); height: var(--hex-h);
+            clip-path: polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%);
+            display: flex; justify-content: center; align-items: center;
+            transform: translate(-50%, -50%); /* Zentriert den Hex auf seinem Koordinatenpunkt */
+        }
+
+        .forest { background: #1b5e20; } .pasture { background: #76ff03; }
+        .field { background: #f1c40f; } .hill { background: #d35400; }
+        .mountain { background: #7f8c8d; } .desert { background: #f3e5ab; }
+
+        .token {
+            background: #fff; color: #333; border-radius: 50%; width: 32px; height: 32px;
+            display: flex; flex-direction: column; justify-content: center; align-items: center;
+            font-weight: 800; border: 2px solid #333; font-size: 0.85em;
+        }
+        .red { color: #e74c3c; border-color: #e74c3c; }
+
+        /* HANDY MODUS */
+        @media (max-width: 768px) {
+            body { flex-direction: column; }
+            .sidebar { 
+                width: 100%; 
+                height: auto; 
+                order: 2; 
+                padding: 10px;
+                box-sizing: border-box;
+            }
+            .viewport { 
+                height: 60vh; 
+                order: 1; 
+            }
+            h2 { display: none; }
+        }
+    </style>
+</head>
+<body>
+
+<div class="sidebar">
+    <h2 style="margin: 0; font-size: 1.1em;">Catan Setup</h2>
+    <div class="control-group">
+        <label>Radius</label>
+        <input type="number" id="radius" value="3" min="1" oninput="autoScaleResources()">
+    </div>
+    <div style="font-size: 0.8em; display: flex; align-items: center; gap: 5px;">
+        <input type="checkbox" id="randomTokens"> Zahlen mischen
+    </div>
+    <div class="control-group">
+        <div class="res-grid">
+            <div><label>Wald</label><input type="number" class="res-count" data-type="forest"></div>
+            <div><label>Weide</label><input type="number" class="res-count" data-type="pasture"></div>
+            <div><label>Acker</label><input type="number" class="res-count" data-type="field"></div>
+            <div><label>Hügel</label><input type="number" class="res-count" data-type="hill"></div>
+            <div><label>Erz</label><input type="number" class="res-count" data-type="mountain"></div>
+            <div><label>Wüste</label><input type="number" class="res-count" data-type="desert"></div>
+        </div>
+    </div>
+    <button onclick="generate()">Neu generieren</button>
+</div>
+
+<div class="viewport">
+    <div id="board-wrapper">
+        <div id="board"></div>
+    </div>
+</div>
+
+<script>
+    const CATAN_SEQUENCE = [
+        {l:'A', n:5}, {l:'B', n:2}, {l:'C', n:6}, {l:'D', n:3}, {l:'E', n:8}, {l:'F', n:10},
+        {l:'G', n:9}, {l:'H', n:12}, {l:'I', n:11}, {l:'J', n:4}, {l:'K', n:8}, {l:'L', n:10},
+        {l:'M', n:9}, {l:'N', n:4}, {l:'O', n:5}, {l:'P', n:6}, {l:'Q', n:3}, {l:'R', n:11}
+    ];
+
+    function autoScaleResources() {
+        const radius = parseInt(document.getElementById('radius').value) || 1;
+        const totalHexes = 3 * radius * radius - 3 * radius + 1;
+        const inputs = document.querySelectorAll('.res-count');
+        let targetValues = { forest: 0, pasture: 0, field: 0, hill: 0, mountain: 0, desert: 0 };
+
+        const base = { forest: 4, pasture: 4, field: 4, hill: 3, mountain: 3, desert: 1 };
+        let remaining = totalHexes;
+        inputs.forEach(input => {
+            let count = Math.floor((base[input.dataset.type] / 19) * totalHexes);
+            targetValues[input.dataset.type] = count;
+            remaining -= count;
+        });
+        while(remaining > 0) {
+            const keys = Object.keys(base).filter(k => k !== 'desert');
+            targetValues[keys[Math.floor(Math.random() * keys.length)]]++;
+            remaining--;
+        }
+        inputs.forEach(input => input.value = targetValues[input.dataset.type]);
+    }
+
+    function getSpiralCoords(radius) {
+        let results = [];
+        for (let r = 0; r < radius; r++) {
+            if (r === 0) results.push({q: 0, r: 0});
+            else {
+                let q = 0, s = -r;
+                const dirs = [[1,0,-1], [0,1,-1], [-1,1,0], [-1,0,1], [0,-1,1], [1,-1,0]];
+                for (let j = 0; j < 6; j++) {
+                    for (let i = 0; i < r; i++) {
+                        results.push({q, r: s});
+                        q += dirs[j][0]; s += dirs[j][1];
+                    }
+                }
+            }
+        }
+        return results;
+    }
+
+    function generate() {
+        const board = document.getElementById('board');
+        const wrapper = document.getElementById('board-wrapper');
+        const viewport = document.querySelector('.viewport');
+        board.innerHTML = '';
+        
+        const radius = parseInt(document.getElementById('radius').value) || 3;
+        const randomMode = document.getElementById('randomTokens').checked;
+
+        let resPool = [];
+        document.querySelectorAll('.res-count').forEach(i => {
+            for(let c=0; c<parseInt(i.value); c++) resPool.push(i.dataset.type);
+        });
+        resPool.sort(() => Math.random() - 0.5);
+
+        let coords = getSpiralCoords(radius);
+        let tokenPool = [];
+        const neededTokens = resPool.filter(r => r !== 'desert').length;
+        for(let i=0; i < neededTokens; i++) tokenPool.push(CATAN_SEQUENCE[i % CATAN_SEQUENCE.length]);
+        if (randomMode) tokenPool.sort(() => Math.random() - 0.5);
+
+        const hexW = 100; const hexH = 88;
+        let tokenIndex = 0;
+
+        coords.forEach((pos, i) => {
+            if (i >= resPool.length) return;
+            const type = resPool[i];
+            const hex = document.createElement('div');
+            hex.className = `hex ${type}`;
+            // Koordinaten-Berechnung
+            hex.style.left = `${hexW * (pos.q + pos.r/2)}px`;
+            hex.style.top = `${hexH * pos.r}px`;
+            
+            if (type !== 'desert' && tokenIndex < tokenPool.length) {
+                const data = tokenPool[tokenIndex];
+                const tk = document.createElement('div');
+                tk.className = `token ${data.n===6 || data.n===8 ? 'red' : ''}`;
+                tk.innerHTML = `<span style="font-size:0.5em; color:#999">${randomMode ? '' : data.l}</span><span>${data.n}</span>`;
+                hex.appendChild(tk);
+                tokenIndex++;
+            }
+            board.appendChild(hex);
+        });
+
+        // ZOOM & ZENTRIERUNG FIX
+        const boardSize = (radius * 2 - 1);
+        const totalW = boardSize * hexW;
+        const totalH = boardSize * hexH;
+
+        const scaleX = (viewport.clientWidth - 40) / totalW;
+        const scaleY = (viewport.clientHeight - 40) / totalH;
+        const finalScale = Math.min(scaleX, scaleY, 2.5);
+        
+        wrapper.style.transform = `scale(${finalScale})`;
+        
+        // Das Board selbst hat keine Ausdehnung mehr, alles ist absolut zentriert
+        board.style.width = "1px";
+        board.style.height = "1px";
+    }
+
+    window.addEventListener('resize', generate);
+    autoScaleResources();
+    generate();
+</script>
+</body>
+</html>
